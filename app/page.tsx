@@ -1,6 +1,6 @@
 'use client';
 import {useCallback,useEffect,useMemo,useState} from 'react';
-import {Home,ChartNoAxesColumn,ReceiptText,Settings,Plus,ArrowLeft,CheckCircle2,Wallet,AlertTriangle,LogOut,Trash2,PenLine,CalendarDays,ArrowUpRight,TrendingDown,Target,Search,ShieldCheck,Clock3,ChevronRight} from 'lucide-react';
+import {Home,ChartNoAxesColumn,ReceiptText,Settings,Plus,ArrowLeft,CheckCircle2,Wallet,AlertTriangle,LogOut,Trash2,PenLine,CalendarDays,ArrowUpRight,TrendingDown,Target,Search,ShieldCheck,Clock3,ChevronRight,Moon,Sun,TrendingUp,Sparkles} from 'lucide-react';
 import {supabase,enabled} from '../lib/supabase';
 import type {User} from '@supabase/supabase-js';
 type Category={id:string;name:string};type Expense={id:string;category_id:string;amount:number;description:string;logged_at:string};
@@ -8,7 +8,51 @@ type Tab='Home'|'Charts'|'Expenses'|'Settings'|'Add Expense';
 const money=(n:number)=>new Intl.NumberFormat('en-PH',{style:'currency',currency:'PHP'}).format(n);
 const initialCategories=['Food','Rent','Transport','School','Shopping','Other'];
 function localDate(iso:string){return new Date(iso).toLocaleDateString('en-PH',{year:'numeric',month:'short',day:'numeric'});}function dateTimeLocal(){const d=new Date();return new Date(d.getTime()-d.getTimezoneOffset()*60000).toISOString().slice(0,16)}
-export default function Page(){const[user,setUser]=useState<User|null>(null),[ready,setReady]=useState(false),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[mode,setMode]=useState<'signin'|'signup'>('signin');const[tab,setTab]=useState<Tab>('Home'),[categories,setCategories]=useState<Category[]>([]),[expenses,setExpenses]=useState<Expense[]>([]),[limit,setLimit]=useState(5000),[amount,setAmount]=useState(''),[description,setDescription]=useState(''),[category,setCategory]=useState(''),[loggedAt,setLoggedAt]=useState(dateTimeLocal()),[editId,setEditId]=useState<string|null>(null),[search,setSearch]=useState(''),[filter,setFilter]=useState(''),[visible,setVisible]=useState(6),[newCat,setNewCat]=useState(''),[alert,setAlert]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');
+// Reusable, database-driven data visualizations (no sample or invented expenses).
+const CATEGORY_PALETTE=['#9B83FF','#45D2BA','#FFB663','#F477AD','#5AA9FF','#F0D575','#B19CFF','#6DDD91'];
+function colorForCategory(name:string){
+  const fixed:Record<string,string>={food:'#FFB663',rent:'#9B83FF',transport:'#5AA9FF',school:'#45D2BA',shopping:'#F477AD',other:'#F0D575'};
+  const key=name.toLowerCase();
+  if(fixed[key])return fixed[key];
+  let hash=0;for(const ch of key)hash=(hash*31+ch.charCodeAt(0))>>>0;
+  return CATEGORY_PALETTE[hash%CATEGORY_PALETTE.length];
+}
+function SpendingTrend({expenses,limit}:{expenses:Expense[];limit:number}){
+  const weeks=[0,0,0,0,0];
+  expenses.forEach(e=>{const day=new Date(e.logged_at).getDate();weeks[Math.min(4,Math.floor((day-1)/7))]+=e.amount});
+  const guideline=limit/5;
+  const maximum=Math.max(1,...weeks,guideline)*1.23;
+  const x=(i:number)=>54+i*133;
+  const y=(amount:number)=>188-amount/maximum*148;
+  const points=weeks.map((v,i)=>`${x(i)},${y(v)}`).join(' ');
+  const area=`M ${x(0)} 188 L ${weeks.map((v,i)=>`${x(i)} ${y(v)}`).join(' L ')} L ${x(4)} 188 Z`;
+  const grid=[0,.25,.5,.75,1];
+  const hasSpend=weeks.some(v=>v>0);
+  return <div className="trendChart">
+    <div className="trendLegend"><span><i className="trendLegendDot"/>Actual spending</span><span><i className="trendLegendDot mint"/>Weekly budget guide</span></div>
+    <div className="trendSvgBox"><svg viewBox="0 0 650 236" role="img" aria-label={`This month's weekly spending: ${weeks.map((n,i)=>`week ${i+1}: ${money(n)}`).join(', ')}`} preserveAspectRatio="xMidYMid meet">
+      <defs><linearGradient id="spendingFillPenny" x1="0" y1="0" x2="0" y2="1"><stop offset="0%" stopColor="#8b6cff" stopOpacity=".28"/><stop offset="100%" stopColor="#8b6cff" stopOpacity=".01"/></linearGradient></defs>
+      {grid.map((fraction,i)=><g key={i}><line className="chartGridLine" x1="54" y1={y(maximum*fraction)} x2="590" y2={y(maximum*fraction)} /><text className="chartAxisLabel" x="43" y={y(maximum*fraction)+4} textAnchor="end">{maximum*fraction>=1000?`${(maximum*fraction/1000).toFixed(1)}k`:Math.round(maximum*fraction)}</text></g>)}
+      <line x1="54" x2="590" y1={y(guideline)} y2={y(guideline)} stroke="#45D2BA" strokeWidth="2" strokeDasharray="7 7" opacity=".75"/>
+      {hasSpend&&<path d={area} fill="url(#spendingFillPenny)"/>}
+      <polyline points={points} fill="none" stroke="#9986FF" strokeWidth="4" strokeLinecap="round" strokeLinejoin="round"/>
+      {weeks.map((value,i)=><g key={i}><circle cx={x(i)} cy={y(value)} r="5.5" fill="#9580FF" stroke="var(--chart-point-outline)" strokeWidth="3"><title>{`Week ${i+1}: ${money(value)}`}</title></circle><text className="chartAxisLabel weekLabel" textAnchor="middle" x={x(i)} y="222">W{i+1}</text></g>)}
+    </svg></div>
+    <p className="chartFootnote">{hasSpend?'Weekly totals update automatically when you add, edit, or delete an expense.':'No expenses logged this month yet. Your trend appears as you record spending.'}</p>
+  </div>;
+}
+function CategoryDonut({items,total}:{items:{id:string;name:string;total:number}[];total:number}){
+  const segments=items.reduce<{start:number;end:number;color:string}[]>((acc,item)=>{const start=acc.length?acc[acc.length-1].end:0;const end=start+(total?item.total/total*100:0);acc.push({start,end,color:colorForCategory(item.name)});return acc},[]);
+  const gradient=total>0?`conic-gradient(${segments.map(i=>`${i.color} ${i.start}% ${i.end}%`).join(', ')})`:'conic-gradient(var(--donut-empty) 0% 100%)';
+  return <div className="categoryDonutArea"><div className="categoryDonut" style={{background:gradient}} role="img" aria-label={total?`Spending by category: ${items.map(item=>`${item.name} ${Math.round(item.total/total*100)} percent`).join(', ')}`:'No categorized spending this month'}><div className="categoryDonutCenter"><span>TOTAL SPENT</span><strong>{money(total)}</strong><small>this month</small></div></div><div className="categoryDonutLegend">{items.length?items.map(item=><div className="donutLegendRow" key={item.id}><span className="donutLegendName"><i style={{background:colorForCategory(item.name)}}/>{item.name}</span><strong>{Math.round(item.total/total*100)}%</strong></div>):<p className="chartEmptySmall">Add an expense to see the category breakdown.</p>}</div></div>;
+}
+function ThemeButton({theme,onClick,compact=false}:{theme:'dark'|'light';onClick:()=>void;compact?:boolean}){
+ return <button className={`themeSwitch ${compact?'compact':''}`} type="button" onClick={onClick} aria-label={`Switch to ${theme==='dark'?'light':'dark'} mode`} title={`Switch to ${theme==='dark'?'light':'dark'} mode`}>{theme==='dark'?<Sun size={18}/>:<Moon size={18}/>}<span>{theme==='dark'?'Light mode':'Dark mode'}</span></button>;
+}
+export default function Page(){const[user,setUser]=useState<User|null>(null),[ready,setReady]=useState(false),[email,setEmail]=useState(''),[password,setPassword]=useState(''),[mode,setMode]=useState<'signin'|'signup'>('signin');const[tab,setTab]=useState<Tab>('Home'),[categories,setCategories]=useState<Category[]>([]),[expenses,setExpenses]=useState<Expense[]>([]),[limit,setLimit]=useState(5000),[amount,setAmount]=useState(''),[description,setDescription]=useState(''),[category,setCategory]=useState(''),[loggedAt,setLoggedAt]=useState(dateTimeLocal()),[editId,setEditId]=useState<string|null>(null),[search,setSearch]=useState(''),[filter,setFilter]=useState(''),[visible,setVisible]=useState(6),[newCat,setNewCat]=useState(''),[alert,setAlert]=useState(false),[error,setError]=useState(''),[busy,setBusy]=useState(false),[notice,setNotice]=useState('');const[theme,setTheme]=useState<'dark'|'light'>('dark');
+useEffect(()=>{try{const saved=window.localStorage.getItem('penny-ui-theme');if(saved==='dark'||saved==='light')setTheme(saved)}catch{}},[]);
+useEffect(()=>{document.documentElement.setAttribute('data-theme',theme);try{window.localStorage.setItem('penny-ui-theme',theme)}catch{}},[theme]);
+const toggleTheme=()=>setTheme(t=>t==='dark'?'light':'dark');
 const uid=user?.id;
 const refresh=useCallback(async()=>{if(!supabase||!uid)return;const [cats,exps,bud]=await Promise.all([supabase.from('categories').select('id,name').order('name'),supabase.from('expenses').select('id,category_id,amount,description,logged_at').order('logged_at',{ascending:false}),supabase.from('budgets').select('monthly_limit').eq('user_id',uid).maybeSingle()]);if(cats.error||exps.error||bud.error){setError(cats.error?.message||exps.error?.message||bud.error?.message||'Could not load data');return}setCategories(cats.data||[]);setExpenses((exps.data||[]).map(e=>({...e,amount:Number(e.amount)})));if(bud.data)setLimit(Number(bud.data.monthly_limit));},[uid]);
 useEffect(()=>{if(!supabase){setReady(true);return}supabase.auth.getUser().then(({data})=>{setUser(data.user);setReady(true)});const {data:{subscription}}=supabase.auth.onAuthStateChange((_event,session)=>setUser(session?.user??null));return()=>subscription.unsubscribe()},[]);
@@ -26,7 +70,7 @@ function navigate(t:Tab){setTab(t);setError('');setNotice('');window.scrollTo(0,
 const tabs:[Exclude<Tab,'Add Expense'>,typeof Home][]=[['Home',Home],['Charts',ChartNoAxesColumn],['Expenses',ReceiptText],['Settings',Settings]];
 if(!ready)return <div className="auth">Loading P.E.N.N.Y…</div>;
 if(!enabled)return <div className="auth"><h1>P.E.N.N.Y.</h1><p>Connect Supabase to enable the live budget tracker.</p><p className="note">Set NEXT_PUBLIC_SUPABASE_URL and NEXT_PUBLIC_SUPABASE_ANON_KEY, then run the SQL in supabase/schema.sql.</p><p className="tiny">See README.md for step-by-step instructions.</p></div>;
-if(!user)return <main className="auth"><div className="brand" style={{padding:0}}>P.E.N.N.Y.<span className="subbrand">PERSONAL BUDGET TRACKER</span></div><h1 style={{marginTop:32}}>Spend with intention.</h1><p className="muted">A clear view of your student budget, every day.</p><div className="signinTabs"><button className={`btn ${mode==='signin'?'':'ghost'}`} onClick={()=>setMode('signin')}>Sign in</button><button className={`btn ${mode==='signup'?'':'ghost'}`} onClick={()=>setMode('signup')}>Create account</button></div><div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} /></div><div className="field"><label>Password</label><input className="input" type="password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)} /></div>{error&&<p className="error">{error}</p>}{notice&&<p className="note">{notice}</p>}<button className="btn wide" disabled={busy||!email||password.length<6} onClick={submitAuth}>{busy?'Please wait…':mode==='signin'?'Sign in':'Create account'}</button><p className="tiny">Your expenses are private to your account.</p></main>;
+if(!user)return <main className="auth"><div className="authThemeRow"><ThemeButton theme={theme} onClick={toggleTheme} compact/></div><div className="brand" style={{padding:0}}>P.E.N.N.Y.<span className="subbrand">PERSONAL BUDGET TRACKER</span></div><h1 style={{marginTop:32}}>Spend with intention.</h1><p className="muted">A clear view of your student budget, every day.</p><div className="signinTabs"><button className={`btn ${mode==='signin'?'':'ghost'}`} onClick={()=>setMode('signin')}>Sign in</button><button className={`btn ${mode==='signup'?'':'ghost'}`} onClick={()=>setMode('signup')}>Create account</button></div><div className="field"><label>Email</label><input className="input" type="email" value={email} onChange={e=>setEmail(e.target.value)} /></div><div className="field"><label>Password</label><input className="input" type="password" minLength={6} value={password} onChange={e=>setPassword(e.target.value)} /></div>{error&&<p className="error">{error}</p>}{notice&&<p className="note">{notice}</p>}<button className="btn wide" disabled={busy||!email||password.length<6} onClick={submitAuth}>{busy?'Please wait…':mode==='signin'?'Sign in':'Create account'}</button><p className="tiny">Your expenses are private to your account.</p></main>;
 return <div className="shell">
   <aside className="sidebar" aria-label="Main navigation">
     <div className="brandlock">
@@ -45,12 +89,13 @@ return <div className="shell">
       <div className="progress progressSlim"><div className="bar" style={{width:`${Math.min(100,Math.max(0,percent))}%`}}/></div>
       <div className="sideBudgetFoot">{percent}% of {money(limit)} used</div>
     </div>
+    <ThemeButton theme={theme} onClick={toggleTheme}/>
     <div className="sidebarDivider"/>
     <div className="userRow"><div className="avatar">{user.email?.charAt(0).toUpperCase()||'U'}</div><div className="userMeta"><strong>My account</strong><span title={user.email}>{user.email}</span></div></div>
     <button className="nav signout" onClick={()=>supabase?.auth.signOut()}><LogOut size={18}/>Sign out</button>
   </aside>
   <main className="workspace">
-    <div className="mobileTop"><div className="brandlock"><div className="brandIcon"><Wallet size={19}/></div><div className="brandText"><div className="brandName">P.E.N.N.Y.</div><span className="subbrand">BUDGET TRACKER</span></div></div><div className="avatar" title={user.email}>{user.email?.charAt(0).toUpperCase()||'U'}</div></div>
+    <div className="mobileTop"><div className="brandlock"><div className="brandIcon"><Wallet size={19}/></div><div className="brandText"><div className="brandName">P.E.N.N.Y.</div><span className="subbrand">BUDGET TRACKER</span></div></div><div className="mobileControls"><ThemeButton theme={theme} onClick={toggleTheme} compact/><div className="avatar" title={user.email}>{user.email?.charAt(0).toUpperCase()||'U'}</div></div></div>
     <div className="eyebrow"><span>YOUR SPACE</span><ChevronRight size={13}/><span>{tab}</span></div>
     <header className="pagehead">
       <div><h1>{tab==='Home'?'Your money, at a glance':tab==='Charts'?'Spending summary':tab==='Expenses'?'Your expenses':tab==='Settings'?'Settings':editId?'Edit expense':'Add expense'}</h1>
@@ -72,6 +117,10 @@ return <div className="shell">
         <article className="card metricCard"><div className="metricTop"><span className="metriclabel">Total spent</span><div className="metricIcon"><TrendingDown size={19}/></div></div><div className="value">{money(spent)}</div><div className="metricFoot">Spent so far this month</div></article>
         <article className="card metricCard"><div className="metricTop"><span className="metriclabel">Remaining balance</span><div className="metricIcon"><Target size={19}/></div></div><div className={`value ${remaining<0?'negative':''}`}>{money(remaining)}</div><div className="metricFoot">{remaining<0?'You have exceeded your limit':'Still available to spend'}</div></article>
       </div>
+      <div className="insightGrid">
+        <section className="card trendCard"><div className="sectionHeading"><div><span className="miniEyebrow"><TrendingUp size={13}/> YOUR TRENDS</span><h2 className="sectionTitle">Spending over time</h2><span className="sectionCaption">Your real expenses across the weeks of this month</span></div><span className="softTag">This month</span></div><SpendingTrend expenses={monthExpenses} limit={limit}/></section>
+        <section className="card donutCard"><div className="sectionHeading"><div><span className="miniEyebrow"><Sparkles size={13}/> YOUR MIX</span><h2 className="sectionTitle">Where your money goes</h2><span className="sectionCaption">Expense categories, at a glance</span></div></div><CategoryDonut items={byCat} total={spent}/></section>
+      </div>
       <div className="two dashboardPanels">
         <section className="card overviewCard"><div className="sectionHeading"><div><h2 className="sectionTitle">Budget overview</h2><span className="sectionCaption">How you’re doing this month</span></div><span className="softTag">Monthly</span></div>
           <div className="budgetStatus"><span>Budget used</span><strong>{percent}%</strong></div>
@@ -85,16 +134,18 @@ return <div className="shell">
         </section>
       </div>
     </>}
-    {tab==='Charts'&&<div className="two chartsPanels">
+    {tab==='Charts'&&<>
+      <section className="card trendCard chartsTrend"><div className="sectionHeading"><div><span className="miniEyebrow"><TrendingUp size={13}/> MONTHLY INSIGHTS</span><h2 className="sectionTitle">Your spending trend</h2><span className="sectionCaption">Actual weekly expenses with a guide based on your monthly budget</span></div><span className="softTag">{new Date().toLocaleDateString('en-PH',{month:'short',year:'numeric'})}</span></div><SpendingTrend expenses={monthExpenses} limit={limit}/></section>
+      <div className="two chartsPanels">
       <section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Monthly progress</h2><span className="sectionCaption">Track your spending against your limit</span></div></div>
-        <div className="donutWrap"><div className="donut" style={{background:`conic-gradient(#526f94 0 ${Math.min(100,Math.max(0,percent))}%, #e8edf4 ${Math.min(100,Math.max(0,percent))}% 100%)`}}><div className="donutInner"><strong>{percent}%</strong><span>used</span></div></div></div>
+        <div className="donutWrap"><div className="donut" style={{background:`conic-gradient(#9279ff 0 ${Math.min(100,Math.max(0,percent))}%, var(--donut-empty) ${Math.min(100,Math.max(0,percent))}% 100%)`}}><div className="donutInner"><strong>{percent}%</strong><span>used</span></div></div></div>
         <div className="chartLegend"><span><i className="legendDot legendSpent"/> Spent: {money(spent)}</span><span><i className="legendDot legendLeft"/> Remaining: {money(remaining)}</span></div>
         <div className="budgetMessage"><div className="messageIcon"><ShieldCheck size={17}/></div><p>{percent>=100?'Your expenses have reached or exceeded the monthly limit.':`You’ve used ${percent}% of your monthly budget.`}</p></div>
       </section>
-      <section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Spending by category</h2><span className="sectionCaption">What takes up the most of your budget</span></div></div>
-        <div className="categoryBreakdown">{byCat.map((c,i)=><div className="categoryRow" key={c.id}><div className="categoryInfo"><span className="catName"><i className={`legendDot catColor${i%6}`}/>{c.name}</span><strong>{money(c.total)}</strong></div><div className="progress progressSlim"><div className={`bar catBar${i%6}`} style={{width:`${spent?c.total/spent*100:0}%`}}/></div><span className="categoryPercent">{Math.round(c.total/spent*100)}% of total expenses</span></div>)}{!byCat.length&&<div className="empty"><div className="emptyIcon"><ChartNoAxesColumn size={26}/></div><strong>No spending to chart yet</strong><p>Your category breakdown will appear after you add an expense.</p></div>}</div>
+      <section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Spending by category</h2><span className="sectionCaption">What takes up the most of your budget</span></div></div><CategoryDonut items={byCat} total={spent}/>
+        <div className="categoryBreakdown">{byCat.map((c,i)=><div className="categoryRow" key={c.id}><div className="categoryInfo"><span className="catName"><i className="legendDot" style={{background:colorForCategory(c.name)}}/>{c.name}</span><strong>{money(c.total)}</strong></div><div className="progress progressSlim"><div className="bar" style={{width:`${spent?c.total/spent*100:0}%`,background:colorForCategory(c.name)}}/></div><span className="categoryPercent">{Math.round(c.total/spent*100)}% of total expenses</span></div>)}{!byCat.length&&<div className="empty"><div className="emptyIcon"><ChartNoAxesColumn size={26}/></div><strong>No spending to chart yet</strong><p>Your category breakdown will appear after you add an expense.</p></div>}</div>
       </section>
-    </div>}
+    </div></>}
     {tab==='Add Expense'&&<div className="formLayout"><section className="card formCard"><div className="sectionHeading"><div><h2 className="sectionTitle">Expense details</h2><span className="sectionCaption">Keep each entry simple and accurate</span></div><button className="backButton" onClick={()=>navigate('Expenses')}><ArrowLeft size={17}/> Back</button></div>
       <div className="field"><label htmlFor="amount">Expense amount <span className="muted">(PHP)</span></label><div className="currencyInput"><span>₱</span><input id="amount" className="input" type="number" inputMode="decimal" min="0.01" step="0.01" value={amount} onChange={e=>setAmount(e.target.value)} placeholder="0.00" /></div></div>
       <div className="field"><label htmlFor="desc">Description</label><input id="desc" className="input" maxLength={150} value={description} onChange={e=>setDescription(e.target.value)} placeholder="e.g., Lunch at canteen" /></div>
@@ -109,12 +160,12 @@ return <div className="shell">
       {!filtered.length&&<div className="empty"><div className="emptyIcon"><Search size={25}/></div><strong>No matching expenses</strong><p>Try a different keyword or category.</p></div>}
       <div className="entriesCount">Showing {shown.length} of {filtered.length} entries</div>{shown.length<filtered.length&&<button className="btn ghost wide loadMore" onClick={()=>setVisible(v=>v+6)}>Load more</button>}
     </section>}
-    {tab==='Settings'&&<div className="two settingsPanels"><section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Monthly budget</h2><span className="sectionCaption">Set the amount you plan to spend</span></div><div className="headingIcon"><Wallet size={18}/></div></div>
+    {tab==='Settings'&&<><div className="two settingsPanels"><section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Monthly budget</h2><span className="sectionCaption">Set the amount you plan to spend</span></div><div className="headingIcon"><Wallet size={18}/></div></div>
       <div className="field"><label htmlFor="budgetLimit">Budget limit (PHP)</label><input id="budgetLimit" className="input" type="number" min="1" value={limit} onChange={e=>setLimit(Number(e.target.value))}/></div><button className="btn wide" onClick={saveLimit} disabled={!(limit>0)}>Save budget</button><p className="fieldHint settingsHint">Changes apply to your monthly summary.</p>
     </section><section className="card"><div className="sectionHeading"><div><h2 className="sectionTitle">Manage categories</h2><span className="sectionCaption">Make your spending categories yours</span></div><div className="headingIcon"><Settings size={18}/></div></div>
       <div className="field"><label htmlFor="newCategory">New category</label><input id="newCategory" className="input" value={newCat} onChange={e=>setNewCat(e.target.value)} placeholder="e.g., Utilities"/></div><button className="btn wide" disabled={!newCat.trim()} onClick={addCategory}><Plus size={17}/>Add category</button><div className="categoryManager">{categories.map(c=><div className="managedCategory" key={c.id}><span>{c.name}</span><button className="smallRemove" onClick={()=>removeCategory(c)} aria-label={`Delete ${c.name}`}><Trash2 size={16}/></button></div>)}</div><p className="fieldHint">Categories assigned to expenses cannot be deleted.</p>
-    </section></div>}
+    </section></div><section className="card appearanceCard"><div><h2 className="sectionTitle">Appearance</h2><p className="sectionCaption">Choose the look that works best for you. Your preference is saved on this device.</p></div><ThemeButton theme={theme} onClick={toggleTheme}/></section><div className="settingsMobileSignout"><button className="btn ghost" onClick={()=>supabase?.auth.signOut()}><LogOut size={16}/> Sign out</button></div></>}
   </main>
-  <nav className="bottom" aria-label="Mobile navigation">{tabs.map(([t,Icon])=><button key={t} className={tab===t?'active':''} aria-current={tab===t?'page':undefined} onClick={()=>navigate(t)}><Icon size={21}/><span>{t}</span></button>)}</nav>
+  <nav className="bottom" aria-label="Mobile navigation">{tabs.slice(0,2).map(([t,Icon])=><button key={t} className={`bottomTab ${tab===t?'active':''}`} aria-current={tab===t?'page':undefined} onClick={()=>navigate(t)}><Icon size={20}/><span>{t}</span></button>)}<button className={`bottomAdd ${tab==='Add Expense'?'active':''}`} aria-label="Add expense" onClick={()=>{setEditId(null);setAmount('');setDescription('');setCategory('');setLoggedAt(dateTimeLocal());navigate('Add Expense')}}><span className="bottomAddIcon"><Plus size={25}/></span><span>Add</span></button>{tabs.slice(2).map(([t,Icon])=><button key={t} className={`bottomTab ${tab===t?'active':''}`} aria-current={tab===t?'page':undefined} onClick={()=>navigate(t)}><Icon size={20}/><span>{t}</span></button>)}</nav>
   {alert&&<div className="alertBackdrop" role="dialog" aria-modal="true" aria-labelledby="alertTitle"><div className="alertBox"><div className="alertIcon">{percent>=80?<AlertTriangle size={28}/>:<CheckCircle2 size={28}/>}</div><h2 id="alertTitle">{percent>=80?'Budget alert':'Expense saved!'}</h2><p className="muted">{notice} You have used <strong>{percent}%</strong> of your monthly budget.</p><div className="budgetStatus"><span>Budget used</span><strong>{percent}%</strong></div><div className="progress"><div className="bar" style={{width:`${Math.min(100,Math.max(0,percent))}%`}}/></div><p className="alertRemaining">Remaining: <strong>{money(remaining)}</strong></p><button className="btn wide" onClick={()=>{setAlert(false);navigate('Charts')}}>View summary <ArrowUpRight size={16}/></button><button className="btn ghost wide" onClick={()=>{setAlert(false);navigate('Expenses')}}>OK</button></div></div>}
 </div>}
